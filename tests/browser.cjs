@@ -1,0 +1,41 @@
+const {chromium}=require('playwright');
+const fs=require('fs'),path=require('path'),assert=require('assert');
+(async()=>{
+ const dir=path.resolve(process.argv[2]||'test-run');
+ const runtime=JSON.parse(fs.readFileSync(path.join(dir,'runtime.json'),'utf8'));
+ const browser=await chromium.launch({channel:'chrome',headless:true});
+ const page=await browser.newPage({viewport:{width:1366,height:900},acceptDownloads:true});
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ page.on('response',r=>{if(r.status()>=500)errors.push(r.url()+':'+r.status())});
+ const click=a=>page.locator('[data-action="'+a+'"]').first().click();
+ try{
+ await page.goto(runtime.url+'/?session='+runtime.token);await page.locator('.library-title').waitFor();
+ assert.equal(await page.locator('[data-select]').count(),0);
+ await click('new');
+ for(const [k,v] of Object.entries({code:'A-13',factoryCode:'000138',name:'测试风扇',factory:'测试电器厂',pack:60,price:12.5,min:2}))await page.locator('[name="'+k+'"]').fill(String(v));
+ await page.locator('[form="productForm"]').click();await page.locator('[data-select]').waitFor();
+ await page.locator('[data-select]').check();
+ await page.waitForFunction(async()=>{const s=await fetch('/api/state').then(r=>r.json());return s.draft.selected.length===1});
+ await page.reload();await page.locator('[data-select]').waitFor();assert(await page.locator('[data-select]').isChecked());
+ await page.locator('[data-view="grid"]').click();assert.equal(await page.locator('.product-card').count(),1);
+ await click('order');await page.locator('[data-qty]').fill('3');
+ const download=page.waitForEvent('download');await click('export');await (await download).saveAs(path.join(dir,'browser-report.xlsx'));
+ await click('finishOrder');await click('history');await page.getByText('下载报货单',{exact:true}).waitFor();await click('close');
+ await click('backup');await click('backupCreate');await page.getByText('备份已完成',{exact:true}).waitFor();await click('close');
+ await click('import');const template=page.waitForEvent('download');await page.getByText('下载导入模板',{exact:true}).click();await (await template).saveAs(path.join(dir,'template.xlsx'));await click('close');
+ await click('photo');
+ const photo=path.resolve('test-photo.png');
+ await page.locator('#orderPhotoInput').setInputFiles(photo);await click('photoRecognize');
+ await page.locator('#photoApplyButton').waitFor({timeout:90000});
+ assert(!(await page.locator('#dialog').innerText()).includes('固定示例'));
+ await page.locator('.raw-ocr').waitFor();
+ await page.locator('[data-photo-field="id"]').first().selectOption({index:1});
+ await page.locator('[data-photo-field="quantity"]').first().fill('3');
+ await page.locator('[data-photo-field="unit"]').first().selectOption('件');
+ await page.locator('[data-photo-field="reviewed"]').first().check();
+ await page.screenshot({path:path.join(dir,'real-ocr.png')});
+ await click('photoApply');await page.locator('#exportButton').waitFor();await click('close');
+ await click('all');await page.screenshot({path:path.join(dir,'real-products.png')});
+ assert.deepEqual(errors,[]);console.log('PASS: real UI create/persist/grid/export/history/backup/template/offline OCR/confirmation');
+ }catch(e){console.error('Page errors:',errors);console.error((await page.locator('body').innerText()).slice(0,6000));throw e}finally{await browser.close()}
+})().catch(e=>{console.error(e);process.exit(1)});
