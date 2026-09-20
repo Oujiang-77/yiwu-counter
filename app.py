@@ -7,6 +7,7 @@ import logging
 import os
 import secrets
 import socket
+import shutil
 import sys
 import threading
 import time
@@ -81,6 +82,25 @@ def resolve_data_dir(explicit=None):
         pass
     return root
 
+def copy_data_dir(source, target):
+    source = Path(source).resolve()
+    target = Path(target).resolve()
+    if source == target:
+        return
+    if source in target.parents or target in source.parents:
+        raise ValueError('新存储位置不能放在当前数据目录里面或包含当前数据目录')
+    target.mkdir(parents=True,exist_ok=True)
+    if any(target.iterdir()):
+        raise ValueError('请选择空文件夹作为新的存储位置')
+    for item in source.iterdir():
+        if item.name in ('runtime.json','app.log','data-location.json'):
+            continue
+        destination = target / item.name
+        if item.is_dir():
+            shutil.copytree(item,destination)
+        else:
+            shutil.copy2(item,destination)
+
 def make_app(data_dir,token=None):
     store=Store(data_dir);token=token or secrets.token_urlsafe(32)
     app=FastAPI(docs_url=None,redoc_url=None,openapi_url=None)
@@ -128,6 +148,25 @@ def make_app(data_dir,token=None):
 
     @app.get('/api/state')
     def state():return {'products':store.products(),'draft':store.get_value('draft',{'selected':[],'quantities':{}}),'version':VERSION,'dataDir':str(store.root),'ocrAvailable':recognition.available()}
+
+    @app.post('/api/data-location/select')
+    def select_data_location():
+        nonlocal store
+        selected=choose_data_folder()
+        if not selected:return {'cancelled':True,'dataDir':str(store.root)}
+        target=Path(selected)
+        if target.resolve()==store.root.resolve():return {'cancelled':False,'dataDir':str(store.root)}
+        with store.lock:
+            copy_data_dir(store.root,target)
+            marker=default_data_dir()/'data-location.json'
+            try:
+                marker.parent.mkdir(parents=True,exist_ok=True)
+                marker.write_text(json.dumps({'path':str(target)},ensure_ascii=False),encoding='utf8')
+            except OSError:
+                logging.exception('无法更新数据目录记忆文件')
+            store=Store(target)
+            app.state.store=store
+        return {'cancelled':False,'dataDir':str(store.root)}
 
     @app.post('/api/products')
     def create(data:dict):return store.save_product(data)
