@@ -43,16 +43,30 @@ def choose_data_folder():
         ]
     shell32 = ctypes.windll.shell32
     ole32 = ctypes.windll.ole32
+    shell32.SHBrowseForFolderW.argtypes = [ctypes.POINTER(BrowseInfo)]
+    shell32.SHBrowseForFolderW.restype = wintypes.LPVOID
+    shell32.SHGetPathFromIDListW.argtypes = [wintypes.LPVOID,wintypes.LPWSTR]
+    shell32.SHGetPathFromIDListW.restype = wintypes.BOOL
+    ole32.CoTaskMemFree.argtypes = [wintypes.LPVOID]
+    ole32.CoTaskMemFree.restype = None
+    ole32.CoInitialize.argtypes = [wintypes.LPVOID]
+    ole32.CoInitialize.restype = ctypes.c_long
+    ole32.CoUninitialize.argtypes = []
+    ole32.CoUninitialize.restype = None
     display_name = ctypes.create_unicode_buffer(260)
-    info = BrowseInfo(None, None, display_name, '请选择商品资料的文件存储位置', 0x0040, None, 0, 0)
-    pidl = shell32.SHBrowseForFolderW(ctypes.byref(info))
-    if not pidl:
-        return None
-    path = ctypes.create_unicode_buffer(32768)
+    info = BrowseInfo(None, None, ctypes.cast(display_name,wintypes.LPWSTR), '请选择商品资料的文件存储位置', 0x0040, None, 0, 0)
+    com_ready = ole32.CoInitialize(None) >= 0
     try:
+        pidl = shell32.SHBrowseForFolderW(ctypes.byref(info))
+        if not pidl:
+            return None
+        path = ctypes.create_unicode_buffer(32768)
         return Path(path.value) if shell32.SHGetPathFromIDListW(pidl, path) else None
     finally:
-        ole32.CoTaskMemFree(pidl)
+        if 'pidl' in locals() and pidl:
+            ole32.CoTaskMemFree(pidl)
+        if com_ready:
+            ole32.CoUninitialize()
 
 def resolve_data_dir(explicit=None):
     """Resolve the persistent data directory, prompting only on first run."""
