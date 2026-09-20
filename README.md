@@ -15,7 +15,7 @@ node build_frontend.cjs
 
 `build_frontend.cjs` 从不含用户订单照片的 `ui-base.html` 提取已确认样式和交互，替换演示功能为 `frontend-live.js` 中的真实接口。最终运行只使用 `web/`，不读取原型或联网资源。
 
-数据默认 `%LOCALAPPDATA%/HuoYouShu`；调试可加 `--data-dir ./test-data --no-browser --port 18763`。仅监听本机，随机本机会话，API 修改请求校验来源和自定义请求头。程序退出可在页面操作。
+数据首次启动时可选择存储文件夹；未选择时默认 `%LOCALAPPDATA%/HuoYouShu`，实际目录会显示在商品资料库页面。调试可加 `--data-dir ./test-data --no-browser --port 18763`。仅监听本机，随机本机会话，API 修改请求校验来源和自定义请求头。程序退出可在页面操作。
 
 ## 验证与构建
 

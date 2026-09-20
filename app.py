@@ -1,5 +1,6 @@
 from __future__ import annotations
 import argparse
+import ctypes
 import io
 import json
 import logging
@@ -11,6 +12,7 @@ import threading
 import time
 import uuid
 import webbrowser
+from ctypes import wintypes
 from datetime import datetime
 from pathlib import Path
 import uvicorn
@@ -21,6 +23,63 @@ from PIL import Image
 from storage import Store,VERSION
 from sheets import FIELDS,inspect_book,read_sheet,guess_mapping,preview_import,save_image,template_bytes,export_bytes
 import recognition
+
+DEFAULT_DATA_DIR_NAME = 'HuoYouShu'
+
+def default_data_dir():
+    return Path(os.environ.get('LOCALAPPDATA',str(Path.home()))) / DEFAULT_DATA_DIR_NAME
+
+def choose_data_folder():
+    """Show a native Windows folder picker for first-run data placement."""
+    if os.name != 'nt':
+        return None
+    class BrowseInfo(ctypes.Structure):
+        _fields_ = [
+            ('hwndOwner', wintypes.HWND), ('pidlRoot', wintypes.LPVOID),
+            ('pszDisplayName', wintypes.LPWSTR), ('lpszTitle', wintypes.LPCWSTR),
+            ('ulFlags', wintypes.UINT), ('lpfn', wintypes.LPVOID),
+            ('lParam', wintypes.LPARAM), ('iImage', ctypes.c_int),
+        ]
+    shell32 = ctypes.windll.shell32
+    ole32 = ctypes.windll.ole32
+    display_name = ctypes.create_unicode_buffer(260)
+    info = BrowseInfo(None, None, display_name, '请选择商品资料的文件存储位置', 0x0040, None, 0, 0)
+    pidl = shell32.SHBrowseForFolderW(ctypes.byref(info))
+    if not pidl:
+        return None
+    path = ctypes.create_unicode_buffer(32768)
+    try:
+        return Path(path.value) if shell32.SHGetPathFromIDListW(pidl, path) else None
+    finally:
+        ole32.CoTaskMemFree(pidl)
+
+def resolve_data_dir(explicit=None):
+    """Resolve the persistent data directory, prompting only on first run."""
+    if explicit:
+        return Path(explicit)
+    default = default_data_dir()
+    marker = default / 'data-location.json'
+    if (default / 'counter.sqlite3').exists():
+        return default
+    if marker.exists():
+        try:
+            selected = Path(json.loads(marker.read_text('utf8')).get('path','')).expanduser()
+            if selected:
+                try:
+                    selected.mkdir(parents=True,exist_ok=True)
+                    return selected
+                except OSError:
+                    pass
+        except (OSError,ValueError,TypeError):
+            pass
+    selected = choose_data_folder()
+    root = selected or default
+    try:
+        default.mkdir(parents=True,exist_ok=True)
+        marker.write_text(json.dumps({'path':str(root)},ensure_ascii=False),encoding='utf8')
+    except OSError:
+        pass
+    return root
 
 def make_app(data_dir,token=None):
     store=Store(data_dir);token=token or secrets.token_urlsafe(32)
@@ -204,7 +263,7 @@ def make_app(data_dir,token=None):
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--data-dir');parser.add_argument('--port',type=int,default=0);parser.add_argument('--no-browser',action='store_true');args=parser.parse_args()
-    root=Path(args.data_dir) if args.data_dir else Path(os.environ.get('LOCALAPPDATA',str(Path.home())))/'HuoYouShu'
+    root=resolve_data_dir(args.data_dir)
     root.mkdir(parents=True,exist_ok=True)
     logging.basicConfig(filename=root/'app.log',level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s',encoding='utf8')
     runtime=root/'runtime.json'
