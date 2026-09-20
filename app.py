@@ -43,6 +43,8 @@ def choose_data_folder():
         ]
     shell32 = ctypes.windll.shell32
     ole32 = ctypes.windll.ole32
+    user32 = ctypes.windll.user32
+    user32.GetForegroundWindow.restype = wintypes.HWND
     shell32.SHBrowseForFolderW.argtypes = [ctypes.POINTER(BrowseInfo)]
     shell32.SHBrowseForFolderW.restype = wintypes.LPVOID
     shell32.SHGetPathFromIDListW.argtypes = [wintypes.LPVOID,wintypes.LPWSTR]
@@ -54,7 +56,8 @@ def choose_data_folder():
     ole32.CoUninitialize.argtypes = []
     ole32.CoUninitialize.restype = None
     display_name = ctypes.create_unicode_buffer(260)
-    info = BrowseInfo(None, None, ctypes.cast(display_name,wintypes.LPWSTR), '请选择商品资料的文件存储位置', 0x0040, None, 0, 0)
+    owner = user32.GetForegroundWindow()
+    info = BrowseInfo(owner, None, ctypes.cast(display_name,wintypes.LPWSTR), '请选择商品资料的文件存储位置', 0x0050, None, 0, 0)
     com_ready = ole32.CoInitialize(None) >= 0
     try:
         pidl = shell32.SHBrowseForFolderW(ctypes.byref(info))
