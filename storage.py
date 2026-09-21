@@ -15,8 +15,16 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-VERSION = '0.1.0'
-TEXT_FIELDS = ('code','factoryCode','name','factory','area','size','battery','charger','cat','notes')
+VERSION = '0.1.1'
+TEXT_FIELDS = ('code','factoryCode','name','factory','size','battery','charger','cat','notes')
+
+def normalize_product(data):
+    out=dict(data)
+    for key in ('area','inner','min'):out.pop(key,None)
+    out['images']=out.get('images', [out['image']] if out.get('image') else [])
+    out['boxImages']=out.get('boxImages',[])
+    out['image']=out['images'][0] if out['images'] else ''
+    return out
 
 def now():
     return datetime.now().isoformat(timespec='seconds')
@@ -24,20 +32,26 @@ def now():
 def validate_product(data):
     out = {k: str(data.get(k) or '').strip() for k in TEXT_FIELDS}
     out['code'] = out['code'].upper()
-    for k, label in [('code','销售编码'),('factoryCode','厂家编码'),('name','商品名称'),('factory','厂家名称')]:
+    for k, label in [('code','销售编码'),('factoryCode','厂家编码'),('name','商品名称')]:
         if not out[k]:
             raise ValueError(f'请填写{label}')
     if any(len(v)>300 for v in out.values()):
         raise ValueError('文字字段最多 300 个字符')
-    for k, label in [('pack','装箱数'),('inner','中包数'),('min','起订件数')]:
+    for k, label in [('pack','装箱数')]:
+        if str(data.get(k,'')).strip() == '':
+            out[k] = 0
+            continue
         try:
             v = Decimal(str(data.get(k,'')))
-            if not v.is_finite() or v != v.to_integral_value() or not 1 <= v <= 1000000:
+            if not v.is_finite() or v != v.to_integral_value() or not 0 <= v <= 1000000:
                 raise ValueError()
             out[k] = int(v)
         except (InvalidOperation,ValueError):
-            raise ValueError(f'{label}须为 1～100 万的整数')
+            raise ValueError(f'{label}须为 0～100 万的整数')
     for k,label,precision in [('price','出厂价','0.01'),('volume','单件体积','0.000001')]:
+        if str(data.get(k,'')).strip() == '':
+            out[k] = 0.0
+            continue
         try:
             v = Decimal(str(data.get(k,'')))
             if not v.is_finite() or v<0 or v>100000000:
@@ -48,9 +62,12 @@ def validate_product(data):
         except (InvalidOperation,ValueError):
             raise ValueError(f'{label}须为非负数，单价最多 2 位、体积最多 6 位小数')
     out['cat'] = out['cat'] or '日用百货'
-    out['image'] = str(data.get('image') or '')
-    if out['image'] and not re.fullmatch(r'[a-f0-9]{32}\.jpg',out['image']):
-        raise ValueError('图片引用无效')
+    for key,label in [('images','主图'),('boxImages','彩盒')]:
+        images=data.get(key,([data['image']] if data.get('image') else []) if key=='images' else [])
+        if not isinstance(images,list) or len(images)>5:raise ValueError(f'{label}最多上传 5 张图片')
+        if any(not isinstance(v,str) or not re.fullmatch(r'[a-f0-9]{32}\.jpg',v) for v in images):raise ValueError('图片引用无效')
+        out[key]=list(dict.fromkeys(images))
+    out['image']=out['images'][0] if out['images'] else ''
     return out
 
 class Store:
@@ -85,11 +102,11 @@ class Store:
 
     def products(self):
         with self.lock, self.connect() as c:
-            return [dict(json.loads(r['data']),id=r['id'],updatedAt=r['updated_at']) for r in c.execute('SELECT * FROM products ORDER BY id DESC')]
+            return [dict(normalize_product(json.loads(r['data'])),id=r['id'],updatedAt=r['updated_at']) for r in c.execute('SELECT * FROM products ORDER BY id DESC')]
 
     def save_product(self,data,product_id=None):
         p=validate_product(data)
-        if p['image'] and not (self.root/'images'/p['image']).is_file():
+        if any(not (self.root/'images'/name).is_file() for name in p['images']+p['boxImages']):
             raise ValueError('图片不存在，请重新上传')
         with self.lock,self.connect() as c:
             try:
@@ -112,6 +129,7 @@ class Store:
             try:
                 for row in rows:
                     p=validate_product(row)
+                    if any(not (self.root/'images'/name).is_file() for name in p['images']+p['boxImages']):raise ValueError('图片不存在，请重新导入')
                     c.execute('INSERT INTO products(code,factory,factory_code,data,created_at,updated_at) VALUES(?,?,?,?,?,?)',
                         (p['code'],p['factory'],p['factoryCode'].upper(),json.dumps(p,ensure_ascii=False),now(),now()))
                     count+=1
@@ -143,7 +161,7 @@ class Store:
         result=[]
         for pid,q in grouped.items():
             p=by_id[pid]
-            if q<p['min'] or q>1000000:raise ValueError(f"{p['code']}：最低 {p['min']} 件起订，最多 100 万件")
+            if q>1000000:raise ValueError(f"{p['code']}：最多 100 万件")
             units=q*p['pack']
             amount=(Decimal(str(p['price']))*units).quantize(Decimal('.01'))
             result.append(dict(p,quantity=q,units=units,amount=str(amount),totalVolume=str(Decimal(str(p['volume']))*q)))
@@ -194,8 +212,8 @@ class Store:
                 if c.execute('PRAGMA user_version').fetchone()[0]!=1:raise ValueError('数据库版本不兼容')
                 c.execute('SELECT data FROM products LIMIT 1')
                 for (raw,) in c.execute('SELECT data FROM products'):
-                    p=json.loads(raw)
-                    if p.get('image') and not (tmp/'images'/p['image']).is_file():raise ValueError('备份缺少商品图片')
+                    p=normalize_product(json.loads(raw))
+                    if any(not (tmp/'images'/name).is_file() for name in p['images']+p['boxImages']):raise ValueError('备份缺少商品图片')
             safe=self.backup('before-restore')
             # Copy image assets before atomically swapping the database. Extra images are harmless.
             for p in (tmp/'images').glob('*.jpg'):shutil.copy2(p,self.root/'images'/p.name)

@@ -5,6 +5,7 @@ import json
 import shutil
 import zipfile
 from pathlib import Path
+from storage import VERSION
 
 root=Path(__file__).resolve().parent
 bundle=root/'dist'/'档口开单系统'
@@ -23,11 +24,23 @@ for dist in metadata.distributions():
             dest=licenses/name/str(file).replace('../','').replace('..\\','')
             dest.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(source,dest)
 (licenses/'dependencies.json').write_text(json.dumps(inventory,ensure_ascii=False,indent=2),'utf8')
-output=root.parent/'outputs'/'档口开单系统-0.1.0-Windows-x64.zip'
+output=root.parent/'outputs'/f'档口开单系统-{VERSION}-Windows-x64.zip'
 output.parent.mkdir(parents=True,exist_ok=True)
 with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED,compresslevel=6) as z:
     for p in sorted(bundle.rglob('*')):
         if p.is_file():z.write(p,Path(bundle.name)/p.relative_to(bundle))
 digest=hashlib.sha256(output.read_bytes()).hexdigest()
-output.with_suffix('.sha256.txt').write_text(digest+'  '+output.name+'\n','utf8')
-print(json.dumps({'file':str(output),'bytes':output.stat().st_size,'sha256':digest},ensure_ascii=False))
+checksum=output.with_suffix('.sha256.txt')
+checksum.write_text(digest+'  '+output.name+'\n','utf8')
+manifest=output.with_suffix('.update.json')
+manifest.write_text(json.dumps({
+    'schema':1,
+    'application':'yiwu-counter',
+    'version':VERSION,
+    'tag':'v'+VERSION,
+    'package':output.name,
+    'bytes':output.stat().st_size,
+    'sha256':digest,
+    'repository':'Oujiang-77/yiwu-counter',
+},ensure_ascii=False,indent=2)+'\n','utf8')
+print(json.dumps({'file':str(output),'bytes':output.stat().st_size,'sha256':digest,'manifest':str(manifest)},ensure_ascii=False))

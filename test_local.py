@@ -28,13 +28,15 @@ class LocalAppTests(unittest.TestCase):
         self.assertEqual(self.post('/api/products',product()).status_code,200)
         self.assertEqual(self.post('/api/products',product()).status_code,400)
         saved=Store(self.temp.name).products();self.assertEqual(len(saved),1);self.assertEqual(saved[0]['factoryCode'],'000138')
-    def test_export_and_minimum(self):
+    def test_export_and_positive_quantity(self):
         p=self.post('/api/products',product()).json()
-        self.assertEqual(self.post('/api/orders',{'items':[{'id':p['id'],'quantity':1}]}).status_code,400)
+        self.assertEqual(self.post('/api/orders',{'items':[{'id':p['id'],'quantity':0}]}).status_code,400)
+        self.assertEqual(self.post('/api/orders',{'items':[{'id':p['id'],'quantity':1}]}).status_code,200)
         r=self.post('/api/orders',{'items':[{'id':p['id'],'quantity':3}],'mode':'single'});self.assertEqual(r.status_code,200,r.text)
         binary=self.client.get(r.json()['url']).content
         book=load_workbook(io.BytesIO(binary));ws=book.active
-        self.assertEqual(ws['L4'].value,3);self.assertEqual(ws['M4'].value,180);self.assertEqual(ws['O4'].value,2250)
+        values=dict(zip([c.value for c in ws[3]],[c.value for c in ws[4]]))
+        self.assertEqual(values['件数'],3);self.assertEqual(values['总数量'],180);self.assertEqual(values['金额'],2250)
         # Changing a product does not alter an existing order snapshot.
         data=product();data['price']=99
         self.client.put('/api/products/'+str(p['id']),json=data,headers=self.headers)
@@ -55,9 +57,10 @@ class LocalAppTests(unittest.TestCase):
         raw=io.BytesIO();b.save(raw)
         upload=self.client.post('/api/import/upload',files={'file':('厂家.xlsx',raw.getvalue())},headers=self.headers).json()
         config=dict(batch=upload['batch'],sheet='厂家商品',header=1,factory='测试杯厂',prefix='B',start=1)
-        r=self.post('/api/import/preview',config);self.assertEqual(r.status_code,200,r.text);preview=r.json();self.assertEqual(preview['valid'],1)
-        r=self.post('/api/import/commit',dict(batch=upload['batch'],previewId=preview['previewId']));self.assertEqual(r.json()['count'],1)
-        p=self.client.get('/api/state').json()['products'][0];self.assertEqual(p['code'],'B-01');self.assertEqual(p['factoryCode'],'000001')
+        r=self.post('/api/import/preview',config);self.assertEqual(r.status_code,200,r.text);preview=r.json();self.assertEqual(preview['valid'],2)
+        r=self.post('/api/import/commit',dict(batch=upload['batch'],previewId=preview['previewId']));self.assertEqual(r.status_code,200,r.text);self.assertEqual(r.json()['count'],2)
+        products=self.client.get('/api/state').json()['products'];p=next(p for p in products if p['code']=='B-01');self.assertEqual(p['factoryCode'],'000001')
+        p2=next(p for p in products if p['code']=='B-02');self.assertEqual(p2['pack'],0);self.assertEqual(p2['price'],9.0)
         self.assertEqual(self.post('/api/import/commit',dict(batch=upload['batch'],previewId=preview['previewId'])).status_code,400)
     def test_atomic_import(self):
         s=self.app.state.store
@@ -82,7 +85,8 @@ class LocalAppTests(unittest.TestCase):
         items=[{'id':p1['id'],'quantity':3},{'id':p2['id'],'quantity':2}]
         merged=self.post('/api/orders',{'items':items,'mode':'single'}).json()
         book=load_workbook(io.BytesIO(self.client.get(merged['url']).content));self.assertEqual(len(book.sheetnames),2)
-        ws=book.worksheets[0];self.assertEqual(ws['A4'].value,'=1+1');self.assertEqual(ws['A4'].data_type,'s');self.assertEqual(ws['O4'].value,18)
+        ws=book.worksheets[0];self.assertEqual(ws['A4'].value,'=1+1');self.assertEqual(ws['A4'].data_type,'s')
+        self.assertEqual(dict(zip([c.value for c in ws[3]],[c.value for c in ws[4]]))['金额'],18)
         split=self.post('/api/orders',{'items':items,'mode':'multiple'}).json()
         with zipfile.ZipFile(io.BytesIO(self.client.get(split['url']).content)) as z:
             self.assertEqual(len(z.namelist()),2)

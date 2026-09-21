@@ -1,0 +1,41 @@
+name: 发布 Windows 安装包
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 安装构建依赖
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
+      - name: 校验标签版本
+        shell: pwsh
+        run: |
+          $version = .\.venv\Scripts\python.exe -c "from storage import VERSION; print(VERSION)"
+          if ($env:GITHUB_REF_NAME -ne "v$version") { throw "标签 $env:GITHUB_REF_NAME 与程序版本 $version 不一致" }
+      - name: 构建并打包
+        run: .\build.ps1
+      - name: 创建 GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $outputDir = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) 'outputs'
+          $assets = Get-ChildItem -LiteralPath $outputDir -File | ForEach-Object { $_.FullName }
+          gh release create $env:GITHUB_REF_NAME $assets --title "档口开单系统 $env:GITHUB_REF_NAME" --notes-file RELEASE-NOTES.md

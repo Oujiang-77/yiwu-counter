@@ -1,6 +1,5 @@
 from __future__ import annotations
 import argparse
-import ctypes
 import io
 import json
 import logging
@@ -13,7 +12,6 @@ import threading
 import time
 import uuid
 import webbrowser
-from ctypes import wintypes
 from datetime import datetime
 from pathlib import Path
 import uvicorn
@@ -22,8 +20,10 @@ from fastapi.responses import FileResponse,JSONResponse,RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from storage import Store,VERSION
-from sheets import FIELDS,inspect_book,read_sheet,guess_mapping,preview_import,save_image,template_bytes,export_bytes
+from sheets import FIELDS,MAX_IMPORT_BYTES,inspect_book,read_sheet,guess_mapping,preview_import,save_image,template_bytes,export_bytes
 import recognition
+from update import check_for_update,run_update_helper
+from quotation import EXPORT_FIELDS,validate_columns
 
 DEFAULT_DATA_DIR_NAME = 'HuoYouShu'
 
@@ -31,54 +31,21 @@ def default_data_dir():
     return Path(os.environ.get('LOCALAPPDATA',str(Path.home()))) / DEFAULT_DATA_DIR_NAME
 
 def choose_data_folder():
-    """Show a native Windows folder picker for first-run data placement."""
-    if os.name != 'nt':
-        return None
-    class BrowseInfo(ctypes.Structure):
-        _fields_ = [
-            ('hwndOwner', wintypes.HWND), ('pidlRoot', wintypes.LPVOID),
-            ('pszDisplayName', wintypes.LPWSTR), ('lpszTitle', wintypes.LPCWSTR),
-            ('ulFlags', wintypes.UINT), ('lpfn', wintypes.LPVOID),
-            ('lParam', wintypes.LPARAM), ('iImage', ctypes.c_int),
-        ]
-    shell32 = ctypes.windll.shell32
-    ole32 = ctypes.windll.ole32
-    user32 = ctypes.windll.user32
-    user32.GetForegroundWindow.restype = wintypes.HWND
-    shell32.SHBrowseForFolderW.argtypes = [ctypes.POINTER(BrowseInfo)]
-    shell32.SHBrowseForFolderW.restype = wintypes.LPVOID
-    shell32.SHGetPathFromIDListW.argtypes = [wintypes.LPVOID,wintypes.LPWSTR]
-    shell32.SHGetPathFromIDListW.restype = wintypes.BOOL
-    ole32.CoTaskMemFree.argtypes = [wintypes.LPVOID]
-    ole32.CoTaskMemFree.restype = None
-    ole32.CoInitialize.argtypes = [wintypes.LPVOID]
-    ole32.CoInitialize.restype = ctypes.c_long
-    ole32.CoUninitialize.argtypes = []
-    ole32.CoUninitialize.restype = None
-    display_name = ctypes.create_unicode_buffer(260)
-    owner = user32.GetForegroundWindow()
-    info = BrowseInfo(owner, None, ctypes.cast(display_name,wintypes.LPWSTR), '请选择商品资料的文件存储位置', 0x0050, None, 0, 0)
-    com_ready = ole32.CoInitialize(None) >= 0
-    try:
-        pidl = shell32.SHBrowseForFolderW(ctypes.byref(info))
-        if not pidl:
-            return None
-        path = ctypes.create_unicode_buffer(32768)
-        return Path(path.value) if shell32.SHGetPathFromIDListW(pidl, path) else None
-    finally:
-        if 'pidl' in locals() and pidl:
-            ole32.CoTaskMemFree(pidl)
-        if com_ready:
-            ole32.CoUninitialize()
+    """Kept for command-line compatibility; the browser now selects folders itself."""
+    return None
 
 def resolve_data_dir(explicit=None):
-    """Resolve the persistent data directory, prompting only on first run."""
+    """Resolve the persistent data directory without blocking the local server.
+
+    On a brand-new installation the app temporarily uses the default local
+    directory.  The UI then opens its in-app folder browser and lets the user
+    choose the real location.  This keeps first launch usable even when the
+    packaged process has no desktop UI access.
+    """
     if explicit:
         return Path(explicit)
     default = default_data_dir()
     marker = default / 'data-location.json'
-    if (default / 'counter.sqlite3').exists():
-        return default
     if marker.exists():
         try:
             selected = Path(json.loads(marker.read_text('utf8')).get('path','')).expanduser()
@@ -90,14 +57,9 @@ def resolve_data_dir(explicit=None):
                     pass
         except (OSError,ValueError,TypeError):
             pass
-    selected = choose_data_folder()
-    root = selected or default
-    try:
-        default.mkdir(parents=True,exist_ok=True)
-        marker.write_text(json.dumps({'path':str(root)},ensure_ascii=False),encoding='utf8')
-    except OSError:
-        pass
-    return root
+    if (default / 'counter.sqlite3').exists():
+        return default
+    return default
 
 def copy_data_dir(source, target):
     source = Path(source).resolve()
@@ -118,10 +80,10 @@ def copy_data_dir(source, target):
         else:
             shutil.copy2(item,destination)
 
-def make_app(data_dir,token=None):
+def make_app(data_dir,token=None,needs_data_location=False):
     store=Store(data_dir);token=token or secrets.token_urlsafe(32)
     app=FastAPI(docs_url=None,redoc_url=None,openapi_url=None)
-    app.state.store=store;app.state.token=token;app.state.previews={}
+    app.state.store=store;app.state.token=token;app.state.previews={};app.state.needs_data_location=needs_data_location
     root=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parent))
     web=root/'web'
 
@@ -164,15 +126,60 @@ def make_app(data_dir,token=None):
     app.mount('/assets',StaticFiles(directory=web),name='assets')
 
     @app.get('/api/state')
-    def state():return {'products':store.products(),'draft':store.get_value('draft',{'selected':[],'quantities':{}}),'version':VERSION,'dataDir':str(store.root),'ocrAvailable':recognition.available()}
+    def state():return {'products':store.products(),'draft':store.get_value('draft',{'selected':[],'quantities':{}}),'version':VERSION,'dataDir':str(store.root),'exportFields':EXPORT_FIELDS,'exportColumns':store.get_value('exportColumns',list(EXPORT_FIELDS)),'ocrAvailable':recognition.available(),'needsDataLocation':bool(app.state.needs_data_location)}
 
-    @app.post('/api/data-location/select')
-    def select_data_location():
+    @app.get('/api/update/check')
+    def update_check():
+        return check_for_update(VERSION)
+
+    @app.post('/api/update/apply')
+    def update_apply():
+        """Start the detached updater; the running server exits shortly after."""
+        if not getattr(sys, 'frozen', False):
+            raise ValueError('开发模式不支持自动替换，请使用正式安装版')
+        info = check_for_update(VERSION, timeout=15)
+        if info.get('status') != 'ok' or not info.get('updateAvailable'):
+            raise ValueError('当前没有可用的新版本')
+        package = info.get('package') or {}
+        package_url = str(package.get('url') or '')
+        checksum_url = str(package.get('checksumUrl') or '')
+        if not package_url or not checksum_url:
+            raise ValueError('线上发布缺少更新包或 SHA256 校验文件')
+        import subprocess
+        import tempfile
+        helper_dir = Path(tempfile.mkdtemp(prefix='huoyoushu-update-helper-'))
+        helper = helper_dir / 'update-helper.exe'
+        try:
+            shutil.copy2(Path(sys.executable), helper)
+            flags = getattr(subprocess, 'DETACHED_PROCESS', 0) | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
+            subprocess.Popen([
+                str(helper), '--apply-update',
+                '--update-package-url', package_url,
+                '--update-checksum-url', checksum_url,
+                '--update-target-dir', str(Path(sys.executable).resolve().parent),
+                '--update-pid', str(os.getpid()),
+            ], cwd=str(helper_dir), close_fds=True, creationflags=flags)
+        except Exception:
+            shutil.rmtree(helper_dir, ignore_errors=True)
+            raise ValueError('无法启动更新助手，请稍后重试')
+        if getattr(app.state, 'server', None):
+            threading.Timer(.6, lambda: setattr(app.state.server, 'should_exit', True)).start()
+        return {'status': 'started', 'latestVersion': info.get('latestVersion')}
+
+    def switch_data_location(target):
         nonlocal store
-        selected=choose_data_folder()
-        if not selected:return {'cancelled':True,'dataDir':str(store.root)}
-        target=Path(selected)
-        if target.resolve()==store.root.resolve():return {'cancelled':False,'dataDir':str(store.root)}
+        target=Path(target).expanduser()
+        if not target.is_absolute():raise ValueError('请输入完整的文件夹路径')
+        if target.resolve()==store.root.resolve():
+            if app.state.needs_data_location:
+                marker=default_data_dir()/'data-location.json'
+                try:
+                    marker.parent.mkdir(parents=True,exist_ok=True)
+                    marker.write_text(json.dumps({'path':str(target)},ensure_ascii=False),encoding='utf8')
+                except OSError:
+                    logging.exception('无法更新数据目录记忆文件')
+            app.state.needs_data_location=False
+            return {'cancelled':False,'dataDir':str(store.root)}
         with store.lock:
             copy_data_dir(store.root,target)
             marker=default_data_dir()/'data-location.json'
@@ -183,7 +190,95 @@ def make_app(data_dir,token=None):
                 logging.exception('无法更新数据目录记忆文件')
             store=Store(target)
             app.state.store=store
+            app.state.needs_data_location=False
         return {'cancelled':False,'dataDir':str(store.root)}
+
+    @app.post('/api/data-location/select')
+    def select_data_location():
+        selected=choose_data_folder()
+        if not selected:return {'cancelled':True,'dataDir':str(store.root)}
+        return switch_data_location(selected)
+
+    def _folder_path(value):
+        """Return a safe absolute directory path for the local browser API."""
+        if value is None or not str(value).strip():
+            return None
+        raw = str(value).strip().strip('"')
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            raise ValueError('请选择有效的文件夹')
+        try:
+            return path.resolve()
+        except OSError:
+            return path.absolute()
+
+    def _folder_entry(path):
+        return {'name':path.name or str(path), 'path':str(path)}
+
+    def _folder_listing(value=None):
+        path = _folder_path(value)
+        if path is None:
+            roots=[]
+            if os.name == 'nt':
+                for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
+                    drive=Path(f'{letter}:\\')
+                    if drive.exists(): roots.append(_folder_entry(drive))
+            else:
+                roots=[_folder_entry(Path('/'))]
+            profile=Path(os.environ.get('USERPROFILE',str(Path.home())))
+            shortcuts=[]
+            for label, candidate in (
+                ('桌面',profile/'Desktop'),
+                ('文档',profile/'Documents'),
+                ('下载',profile/'Downloads'),
+            ):
+                if candidate.is_dir(): shortcuts.append({'name':label,'path':str(candidate.resolve())})
+            return {'path':'','parent':None,'roots':roots,'shortcuts':shortcuts,'entries':[]}
+        if not path.exists():
+            raise ValueError('文件夹不存在，请重新选择')
+        if not path.is_dir():
+            raise ValueError('请选择文件夹而不是文件')
+        try:
+            children=sorted((p for p in path.iterdir() if p.is_dir()), key=lambda p:p.name.casefold())
+        except OSError:
+            raise ValueError('无法读取该文件夹，请选择其他位置')
+        parent=str(path.parent) if path.parent != path else None
+        return {'path':str(path),'parent':parent,'roots':[],'shortcuts':[],
+                'entries':[_folder_entry(child) for child in children]}
+
+    @app.get('/api/data-location/browse')
+    def browse_data_location(path:str=''):
+        return _folder_listing(path)
+
+    @app.post('/api/data-location/create-folder')
+    def create_data_location_folder(data:dict):
+        parent=_folder_path(data.get('parent') if isinstance(data,dict) else None)
+        name=data.get('name') if isinstance(data,dict) else None
+        if parent is None:
+            raise ValueError('请先打开一个文件夹')
+        if not isinstance(name,str) or not name.strip():
+            raise ValueError('请输入文件夹名称')
+        name=name.strip()
+        if name in ('.','..') or any(ch in name for ch in '<>:"/\\|?*'):
+            raise ValueError('文件夹名称不能包含 \\< > : " / \\ | ? *')
+        if len(name)>80:
+            raise ValueError('文件夹名称不能超过 80 个字符')
+        target=(parent/name).resolve()
+        if target.parent != parent.resolve():
+            raise ValueError('文件夹名称无效')
+        try:
+            target.mkdir()
+        except FileExistsError:
+            raise ValueError('该文件夹已经存在')
+        except OSError:
+            raise ValueError('无法创建文件夹，请检查权限')
+        return _folder_listing(str(parent))
+
+    @app.post('/api/data-location/set')
+    def set_data_location(data:dict):
+        path=data.get('path') if isinstance(data,dict) else None
+        if not isinstance(path,str) or not path.strip():raise ValueError('请输入文件夹路径')
+        return switch_data_location(path.strip())
 
     @app.post('/api/products')
     def create(data:dict):return store.save_product(data)
@@ -232,12 +327,23 @@ def make_app(data_dir,token=None):
     async def upload_book(file:UploadFile=File(...)):
         suffix=Path(file.filename or '').suffix.lower()
         if suffix not in ('.xlsx','.xls'):raise ValueError('请选择 .xlsx 或 .xls 文件')
-        raw=await upload_bytes(file,30*1024**2);batch=uuid.uuid4().hex
-        p=store.root/'imports'/(batch+suffix);p.write_bytes(raw)
-        try:names=inspect_book(p)
+        batch=uuid.uuid4().hex
+        p=store.root/'imports'/(batch+suffix)
+        try:
+            size=0
+            with p.open('wb') as output:
+                while chunk:=await file.read(1024**2):
+                    size+=len(chunk)
+                    if size>MAX_IMPORT_BYTES:raise ValueError('Excel 文件超过 500 MB，请拆分后导入')
+                    output.write(chunk)
+            from starlette.concurrency import run_in_threadpool
+            names=await run_in_threadpool(inspect_book,p)
+        except ValueError:
+            p.unlink(missing_ok=True);raise
         except Exception:
             p.unlink(missing_ok=True);raise ValueError('表格无法读取，请确认未加密并另存为标准 Excel 文件')
-        app.state.previews[batch]={'path':p,'names':names,'time':time.time()}
+        finally:await file.close()
+        app.state.previews[batch]={'path':p,'names':names,'time':time.time(),'cache':{}}
         return {'batch':batch,'sheets':names,'filename':file.filename,'fields':FIELDS}
 
     def get_batch(batch):
@@ -249,7 +355,7 @@ def make_app(data_dir,token=None):
     def preview(data:dict):
         b=get_batch(data.get('batch'))
         if data.get('sheet') not in b['names']:raise ValueError('工作表不存在')
-        result=preview_import(store,b['path'],data)
+        result=preview_import(store,b['path'],data,b['cache'])
         preview_id=uuid.uuid4().hex;b['preview']=result;b['previewId']=preview_id
         return dict(result,previewId=preview_id)
 
@@ -262,12 +368,22 @@ def make_app(data_dir,token=None):
         with store.lock:
             count=store.commit_import(valid)
             app.state.previews.pop(data['batch'],None)
+            b['path'].unlink(missing_ok=True)
         return {'count':count}
+
+    @app.put('/api/export-settings')
+    def export_settings(data:dict):
+        columns=validate_columns(data.get('columns'))
+        store.set_value('exportColumns',columns)
+        return {'columns':columns}
 
     @app.post('/api/orders')
     def export(data:dict):
         with store.lock:
-            items=store.order_items(data.get('items',[]));raw,extension=export_bytes(items,store,data.get('mode','single'))
+            items=store.order_items(data.get('items',[]))
+            columns=validate_columns(data.get('columns',store.get_value('exportColumns',list(EXPORT_FIELDS))))
+            raw,extension=export_bytes(items,store,data.get('mode','single'),columns)
+            store.set_value('exportColumns',columns)
             order_id=datetime.now().strftime('%Y%m%d-%H%M%S')+'-'+uuid.uuid4().hex[:6]
             name='报货单_'+order_id+extension;p=store.root/'exports'/name
             p.write_bytes(raw);store.save_order(order_id,items,name)
@@ -318,8 +434,28 @@ def make_app(data_dir,token=None):
     return app
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--data-dir');parser.add_argument('--port',type=int,default=0);parser.add_argument('--no-browser',action='store_true');args=parser.parse_args()
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--data-dir')
+    parser.add_argument('--port',type=int,default=0)
+    parser.add_argument('--no-browser',action='store_true')
+    parser.add_argument('--updated',action='store_true')
+    parser.add_argument('--apply-update',action='store_true')
+    parser.add_argument('--update-package-url')
+    parser.add_argument('--update-checksum-url')
+    parser.add_argument('--update-target-dir')
+    parser.add_argument('--update-pid',type=int,default=0)
+    args=parser.parse_args()
+    if args.apply_update:
+        run_update_helper(package_url=args.update_package_url or '',checksum_url=args.update_checksum_url or '',target_dir=args.update_target_dir or '',pid=args.update_pid)
+        return
     root=resolve_data_dir(args.data_dir)
+    default=default_data_dir().resolve()
+    needs_data_location=(
+        not args.data_dir
+        and root.resolve()==default
+        and not (default/'data-location.json').exists()
+        and not (root/'counter.sqlite3').exists()
+    )
     root.mkdir(parents=True,exist_ok=True)
     logging.basicConfig(filename=root/'app.log',level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s',encoding='utf8')
     runtime=root/'runtime.json'
@@ -331,16 +467,16 @@ def main():
                 with urllib.request.urlopen(old['url']+'/health',timeout=1) as response:
                     health=json.load(response)
                 if health.get('application')=='yiwu-counter':
-                    if not args.no_browser:webbrowser.open(old['url']+'/?session='+old['token'])
+                    if not args.no_browser:webbrowser.open(old['url']+'/?session='+old['token']+('&updated=1' if args.updated else ''))
                     return
         except Exception:pass
-    app=make_app(root)
+    app=make_app(root,needs_data_location=needs_data_location)
     app.state.store.daily_backup()
     sock=socket.socket();sock.bind(('127.0.0.1',args.port));sock.listen(128)
     port=sock.getsockname()[1];url=f'http://127.0.0.1:{port}'
     runtime.write_text(json.dumps({'url':url,'token':app.state.token,'pid':os.getpid()}),'utf8')
     server=uvicorn.Server(uvicorn.Config(app,host='127.0.0.1',port=port,log_config=None,access_log=False));app.state.server=server
-    if not args.no_browser:threading.Timer(1.3,lambda:webbrowser.open(url+'/?session='+app.state.token)).start()
+    if not args.no_browser:threading.Timer(1.3,lambda:webbrowser.open(url+'/?session='+app.state.token+('&updated=1' if args.updated else ''))).start()
     if sys.stdout:print('READY '+url,flush=True)
     try:server.run(sockets=[sock])
     finally:
