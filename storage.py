@@ -15,7 +15,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-VERSION = '0.1.2'
+VERSION = '0.1.3'
 TEXT_FIELDS = ('code','factoryCode','name','factory','size','battery','charger','cat','notes')
 
 def normalize_product(data):

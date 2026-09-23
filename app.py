@@ -26,6 +26,14 @@ from update import check_for_update,run_update_helper
 from quotation import EXPORT_FIELDS,validate_columns
 
 DEFAULT_DATA_DIR_NAME = 'HuoYouShu'
+APP_MUTEX_NAME = r'Local\HuoYouShu-Counter'
+
+def should_reuse_running_instance(health):
+    if health.get('application') != 'yiwu-counter':
+        return False
+    if health.get('version') != VERSION:
+        raise RuntimeError('旧版档口开单系统仍在运行。请先在旧版页面点击“退出系统”，或在任务管理器结束旧程序，再打开新版桌面图标。')
+    return True
 
 def default_data_dir():
     return Path(os.environ.get('LOCALAPPDATA',str(Path.home()))) / DEFAULT_DATA_DIR_NAME
@@ -452,6 +460,8 @@ def main():
     if args.apply_update:
         run_update_helper(package_url=args.update_package_url or '',checksum_url=args.update_checksum_url or '',target_dir=args.update_target_dir or '',pid=args.update_pid)
         return
+    # Inno Setup uses the same mutex to detect a running installed copy.
+    app_mutex = ctypes.windll.kernel32.CreateMutexW(None, False, APP_MUTEX_NAME) if os.name == 'nt' else None
     root=resolve_data_dir(args.data_dir)
     default=default_data_dir().resolve()
     needs_data_location=(
@@ -470,9 +480,11 @@ def main():
             if old['url'].startswith('http://127.0.0.1:'):
                 with urllib.request.urlopen(old['url']+'/health',timeout=1) as response:
                     health=json.load(response)
-                if health.get('application')=='yiwu-counter':
+                if should_reuse_running_instance(health):
                     if not args.no_browser:webbrowser.open(old['url']+'/?session='+old['token']+('&updated=1' if args.updated else ''))
                     return
+        except RuntimeError:
+            raise
         except Exception:pass
     app=make_app(root,needs_data_location=needs_data_location)
     app.state.store.daily_backup()

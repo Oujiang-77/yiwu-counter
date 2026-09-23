@@ -10,13 +10,19 @@ from fastapi.testclient import TestClient
 from openpyxl import Workbook,load_workbook
 from PIL import Image
 from storage import Store
-from app import make_app
+from app import make_app,should_reuse_running_instance
 from recognition import parse_lines
 
 def product(code='A-13',factory='测试电器厂'):
     return dict(code=code,factoryCode='000138',name='测试风扇',factory=factory,area='浙江',size='10cm',battery='1200mAh',charger='Type-C',pack=60,inner=12,volume=.085,price=12.5,min=2)
 
 class LocalAppTests(unittest.TestCase):
+    def test_running_old_version_cannot_capture_new_launch(self):
+        from storage import VERSION
+        self.assertTrue(should_reuse_running_instance({'application':'yiwu-counter','version':VERSION}))
+        self.assertFalse(should_reuse_running_instance({'application':'another-app','version':VERSION}))
+        with self.assertRaisesRegex(RuntimeError,'旧版档口开单系统仍在运行'):
+            should_reuse_running_instance({'application':'yiwu-counter','version':'0.1.1'})
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.app=make_app(self.temp.name,'test-token')
         self.client=TestClient(self.app,base_url='http://127.0.0.1')
