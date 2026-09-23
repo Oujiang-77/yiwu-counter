@@ -180,16 +180,29 @@ function detail(id){
 }
 function promptProductDelete(id){
  const p=products.find(x=>x.id===id);if(!p)return toast('商品已不存在');
- openDialog('删除商品资料','确认后会从商品库和当前待开单清单移除。历史报价单保留。','<p>商品：<b>'+esc(p.code)+' · '+esc(p.name)+'</b></p><label class="stack" style="margin-top:18px">输入销售编码确认<input id="deleteProductCode" autocomplete="off" aria-label="输入销售编码确认删除"></label>','<button data-action="close">取消</button><button class="danger" data-action="productDeleteConfirm" data-id="'+id+'">确认删除</button>',true);
+ openDialog('删除商品资料','确认后会从商品库和当前待开单清单移除。历史报价单保留。','<p>确定删除 <b>'+esc(p.code)+' · '+esc(p.name)+'</b> 吗？</p>','<button data-action="close">取消</button><button class="danger" data-action="productDeleteConfirm" data-id="'+id+'">确认删除</button>',true);
 }
 async function confirmProductDelete(id){
  const p=products.find(x=>x.id===id);if(!p)return toast('商品已不存在');
- if($('#deleteProductCode')?.value.trim().toUpperCase()!==p.code)return toast('请输入正确的销售编码');
  const button=$('[data-action="productDeleteConfirm"]');button.disabled=true;
  try{await api('/api/products/'+id,{method:'DELETE'});selected.delete(id);delete quantities[id];closeDialog();await refreshProducts();toast('商品已删除，历史报价单保留')}
  catch(e){toast(e.message);button.disabled=false}
 }
-document.addEventListener('click',e=>{const button=e.target.closest('[data-action="productDelete"],[data-action="productDeleteConfirm"]');if(!button)return;const id=Number(button.dataset.id);button.dataset.action==='productDelete'?promptProductDelete(id):confirmProductDelete(id)});
+let pendingBulkDeleteIds=[];
+function promptBulkProductDelete(){
+ pendingBulkDeleteIds=[...selected];
+ const rows=products.filter(p=>pendingBulkDeleteIds.includes(p.id));
+ if(!rows.length)return toast('请先勾选要删除的商品');
+ const names=rows.slice(0,5).map(p=>'<li>'+esc(p.code)+' · '+esc(p.name)+'</li>').join('');
+ openDialog('批量删除商品','确认后删除已勾选商品，历史报价单保留。','<p>将删除 <b>'+rows.length+' 款商品</b>，并从当前待开单清单移除。</p><ul class="delete-product-list">'+names+'</ul>'+(rows.length>5?'<small>另外还有 '+(rows.length-5)+' 款已选商品</small>':''),'<button data-action="close">取消</button><button class="danger" data-action="productsBulkDeleteConfirm">确认删除 '+rows.length+' 款</button>',true);
+}
+async function confirmBulkProductDelete(){
+ const button=$('[data-action="productsBulkDeleteConfirm"]');button.disabled=true;
+ const ids=[...pendingBulkDeleteIds];
+ try{const result=await api('/api/products/bulk-delete',{method:'POST',body:{ids}});for(const id of ids){selected.delete(id);delete quantities[id]}pendingBulkDeleteIds=[];closeDialog();await refreshProducts();toast('已删除 '+result.count+' 款商品，历史报价单保留')}
+ catch(e){toast(e.message);button.disabled=false}
+}
+document.addEventListener('click',e=>{const button=e.target.closest('[data-action="productDelete"],[data-action="productDeleteConfirm"],[data-action="productsBulkDelete"],[data-action="productsBulkDeleteConfirm"]');if(!button||button.disabled)return;const id=Number(button.dataset.id),action=button.dataset.action;if(action==='productDelete')promptProductDelete(id);else if(action==='productDeleteConfirm')confirmProductDelete(id);else if(action==='productsBulkDelete')promptBulkProductDelete();else confirmBulkProductDelete()});
 document.addEventListener('click',e=>{const add=e.target.closest('[data-media-add]'),remove=e.target.closest('[data-media-remove]');if(add&&!add.disabled)$('#mediaInput-'+add.dataset.mediaAdd)?.click();if(remove&&!mediaBusy){mediaDraft[remove.dataset.mediaRemove].splice(Number(remove.dataset.index),1);renderMedia()}});
 document.addEventListener('change',e=>{if(e.target.dataset.mediaInput)uploadMedia(e.target.dataset.mediaInput,e.target.files)});
 document.addEventListener('dragover',e=>{const zone=e.target.closest('[data-media-drop]');if(zone){e.preventDefault();zone.classList.add('dragging')}});
@@ -221,7 +234,7 @@ document.addEventListener('dragend',()=>{exportDragKey=''});
 // production page. The base template still contains the legacy markup because
 // it is also used by the design prototype.
 const productionRender=render;
-render=function(){productionRender();document.querySelector('.batch-example')?.remove();document.querySelector('.library-helper')?.remove()};
+render=function(){productionRender();document.querySelector('.batch-example')?.remove();document.querySelector('.library-helper')?.remove();const orderButton=document.querySelector('.selectedbar [data-action="order"]');if(orderButton){const actions=document.createElement('div'),deleteButton=document.createElement('button');actions.className='selection-actions';deleteButton.className='danger';deleteButton.dataset.action='productsBulkDelete';deleteButton.textContent='批量删除';deleteButton.disabled=!selected.size;deleteButton.title='删除已勾选商品';orderButton.replaceWith(actions);actions.append(deleteButton,orderButton)}};
 
 // Keep the empty supplier state concise: the page title is enough when no
 // supplier has been maintained yet.

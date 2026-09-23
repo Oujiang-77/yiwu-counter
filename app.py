@@ -296,6 +296,9 @@ def make_app(data_dir,token=None,needs_data_location=False):
     @app.post('/api/products')
     def create(data:dict):return store.save_product(data)
 
+    @app.post('/api/products/bulk-delete')
+    def delete_products(data:dict):return store.delete_products(data.get('ids'))
+
     @app.put('/api/products/{pid}')
     def edit(pid:int,data:dict):return store.save_product(data,pid)
 

@@ -72,6 +72,28 @@ class LocalAppTests(unittest.TestCase):
         data=product();data['price']=99
         self.client.put('/api/products/'+str(p['id']),json=data,headers=self.headers)
         self.assertEqual(self.client.get('/api/orders').json()[0]['items'][0]['price'],12.5)
+    def test_bulk_delete_is_atomic_and_preserves_order(self):
+        entries=[]
+        for index in range(1,4):
+            data=product(f'D-{index:02d}')
+            data['factoryCode']=f'{index:06d}'
+            entries.append(self.post('/api/products',data).json())
+        a,b,c=entries
+        ids=[a['id'],b['id'],c['id']]
+        order=self.post('/api/orders',{'items':[{'id':a['id'],'quantity':1}],'mode':'single'}).json()
+        original=self.client.get(order['url']).content
+        self.client.put('/api/draft',json={'selected':ids,'quantities':{str(i):2 for i in ids}},headers=self.headers)
+        failed=self.post('/api/products/bulk-delete',{'ids':[a['id'],999999]})
+        self.assertEqual(failed.status_code,400,failed.text)
+        self.assertEqual(len(self.client.get('/api/state').json()['products']),3)
+        deleted=self.post('/api/products/bulk-delete',{'ids':ids[:2]})
+        self.assertEqual(deleted.status_code,200,deleted.text)
+        self.assertEqual(deleted.json()['count'],2)
+        state=self.client.get('/api/state').json()
+        self.assertEqual([p['id'] for p in state['products']],[c['id']])
+        self.assertEqual(state['draft'],{'selected':[c['id']],'quantities':{str(c['id']):2}})
+        self.assertEqual(self.client.get(order['url']).content,original)
+        self.assertEqual(len(self.client.get('/api/orders').json()),1)
     def test_image_and_backup_restore(self):
         raw=io.BytesIO();Image.new('RGB',(20,20),'red').save(raw,'PNG')
         name=self.client.post('/api/images',files={'file':('p.png',raw.getvalue(),'image/png')},headers=self.headers).json()['image']

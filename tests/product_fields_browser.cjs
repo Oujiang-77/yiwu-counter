@@ -22,10 +22,27 @@ const fs=require('fs'),path=require('path'),assert=require('assert');
   for(const value of ['红色','40×30×20 cm','12.345 kg','不锈钢','容量 500ml'])
    assert((await page.locator('#dialog').innerText()).includes(value),value);
   await page.locator('[data-action="productDelete"]').last().click();
-  await page.locator('#deleteProductCode').fill('DEMO-01');
+  assert.equal(await page.locator('#deleteProductCode').count(),0);
+  assert((await page.locator('#dialog').innerText()).includes('确定删除'));
   await page.locator('[data-action="productDeleteConfirm"]').click();
   await page.waitForFunction(()=>document.querySelectorAll('[data-select]').length===0);
+  for(const [code,name] of [['BULK-01','批量测试一'],['BULK-02','批量测试二']]){
+   const response=await page.request.post(runtime.url+'/api/products',{headers:{'X-Counter-Request':'1'},data:{code,factoryCode:code,name,factory:'测试厂',pack:12,price:3}});
+   assert.equal(response.status(),200,await response.text());
+  }
+  await page.reload();
+  await page.locator('[data-select]').first().waitFor();
+  await page.locator('[data-select]').first().check();
+  await page.locator('[data-select]').last().check();
+  const bulk=page.locator('.selectedbar [data-action="productsBulkDelete"]');
+  assert(await bulk.isEnabled());
+  assert.equal(await page.locator('.selectedbar [data-action="order"]').count(),1);
+  await bulk.click();
+  assert((await page.locator('#dialog').innerText()).includes('将删除 2 款商品'));
+  await page.locator('[data-action="productsBulkDeleteConfirm"]').click();
+  await page.waitForFunction(()=>document.querySelectorAll('[data-select]').length===0);
+  assert(await bulk.isDisabled());
   assert.deepEqual(errors,[]);
-  console.log('PASS: product edit, new fields, detail, delete confirmation');
+  console.log('PASS: product edit, new fields, detail, single and bulk delete confirmation');
  }finally{await browser.close()}
 })().catch(e=>{console.error(e);process.exit(1)});

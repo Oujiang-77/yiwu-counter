@@ -135,17 +135,27 @@ class Store:
         return dict(p,id=product_id)
 
     def delete_product(self,product_id):
+        return self.delete_products([product_id])
+
+    def delete_products(self,product_ids):
+        if not isinstance(product_ids,list) or not product_ids or len(product_ids)>10000 or any(type(pid) is not int or pid<=0 for pid in product_ids) or len(set(product_ids))!=len(product_ids):
+            raise ValueError('请选择要删除的商品')
         with self.lock,self.connect() as c:
-            row=c.execute('SELECT id FROM products WHERE id=?',(product_id,)).fetchone()
-            if not row:raise ValueError('商品不存在')
-            c.execute('DELETE FROM products WHERE id=?',(product_id,))
+            requested=set(product_ids)
+            found=set()
+            for start in range(0,len(product_ids),500):
+                batch=product_ids[start:start+500]
+                placeholders=','.join('?' for _ in batch)
+                found.update(row['id'] for row in c.execute(f'SELECT id FROM products WHERE id IN ({placeholders})',batch))
+            if found!=requested:raise ValueError('部分商品已不存在，请刷新后重试')
+            c.executemany('DELETE FROM products WHERE id=?',((pid,) for pid in product_ids))
             draft_row=c.execute('SELECT value FROM kv WHERE key=?',('draft',)).fetchone()
             if draft_row:
                 draft=json.loads(draft_row['value'])
-                draft['selected']=[v for v in draft.get('selected',[]) if v!=product_id]
-                draft.setdefault('quantities',{}).pop(str(product_id),None)
+                draft['selected']=[v for v in draft.get('selected',[]) if v not in found]
+                for pid in found:draft.setdefault('quantities',{}).pop(str(pid),None)
                 c.execute('UPDATE kv SET value=? WHERE key=?',(json.dumps(draft,ensure_ascii=False),'draft'))
-        return {'ok':True}
+        return {'ok':True,'count':len(found)}
 
     def commit_import(self, rows):
         """All accepted rows are committed in one transaction; duplicates never overwrite."""
