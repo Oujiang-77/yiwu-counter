@@ -1,5 +1,6 @@
 from __future__ import annotations
 import argparse
+import ctypes
 import io
 import json
 import logging
@@ -297,6 +298,9 @@ def make_app(data_dir,token=None,needs_data_location=False):
 
     @app.put('/api/products/{pid}')
     def edit(pid:int,data:dict):return store.save_product(data,pid)
+
+    @app.delete('/api/products/{pid}')
+    def delete_product(pid:int):return store.delete_product(pid)
 
     @app.put('/api/draft')
     def draft(data:dict):

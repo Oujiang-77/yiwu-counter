@@ -10,7 +10,7 @@ from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, OneCellAnchor
 from openpyxl.drawing.xdr import XDRPositiveSize2D
 from openpyxl.utils.units import pixels_to_EMU
 
-EXPORT_FIELDS={'name':'商品名称','images':'主图','boxImages':'彩盒','code':'销售编码','factoryCode':'厂家编码','factory':'厂家名称','size':'尺寸','battery':'电池容量','charger':'充电头 / 接口','pack':'装箱数','quantity':'件数','units':'总数量','unitPrice':'单价','totalAmount':'总金额','volume':'单件体积','totalVolume':'总体积','cat':'分类','notes':'备注'}
+EXPORT_FIELDS={'name':'商品名称','images':'主图','boxImages':'彩盒','code':'销售编码','factoryCode':'厂家编码','factory':'厂家名称','color':'颜色','size':'尺寸','cartonSize':'外箱尺寸','cartonWeight':'单箱重量（kg）','material':'材质','parameters':'产品参数','battery':'电池容量','charger':'充电头 / 接口','pack':'装箱数','quantity':'件数','units':'总数量','unitPrice':'单价','totalAmount':'总金额','volume':'单件体积','totalVolume':'总体积','cat':'分类','notes':'备注'}
 EXPORT_FIELD_ALIASES={'price':'unitPrice','amount':'totalAmount'}
 
 def validate_columns(columns):
@@ -55,6 +55,7 @@ def quotation_bytes(items,store,columns=None):
                 if isinstance(value,str):cell.data_type='s'
                 cell.alignment=Alignment(vertical='center',wrap_text=True)
                 if key in ('unitPrice','totalAmount'):cell.number_format='0.00'
+                if key=='cartonWeight':cell.number_format='0.000'
                 if key in ('volume','totalVolume'):cell.number_format='0.000000'
             ws.row_dimensions[row].height=height
         last=3+len(products);total=last+1

@@ -34,6 +34,31 @@ class LocalAppTests(unittest.TestCase):
         self.assertEqual(self.post('/api/products',product()).status_code,200)
         self.assertEqual(self.post('/api/products',product()).status_code,400)
         saved=Store(self.temp.name).products();self.assertEqual(len(saved),1);self.assertEqual(saved[0]['factoryCode'],'000138')
+    def test_new_product_fields_import_export_and_delete(self):
+        b=Workbook();s=b.active;s.title='厂家商品'
+        s.append(['销售编码','厂家编码','商品名称','颜色','外箱尺寸','单箱重量（kg）','材质','产品参数'])
+        s.append(['C-01','FC01','彩色杯','红色','40×30×20 cm',12.345,'不锈钢','容量 500ml\n耐温 100℃'])
+        raw=io.BytesIO();b.save(raw)
+        upload=self.client.post('/api/import/upload',files={'file':('商品.xlsx',raw.getvalue())},headers=self.headers).json()
+        preview=self.post('/api/import/preview',{'batch':upload['batch'],'sheet':'厂家商品','header':1}).json()
+        self.assertEqual(preview['valid'],1,preview)
+        self.assertEqual(preview['rows'][0]['data']['cartonWeight'],12.345)
+        self.post('/api/import/commit',{'batch':upload['batch'],'previewId':preview['previewId']})
+        p=self.client.get('/api/state').json()['products'][0]
+        self.assertEqual((p['color'],p['cartonSize'],p['material'],p['parameters']),('红色','40×30×20 cm','不锈钢','容量 500ml\n耐温 100℃'))
+        self.assertEqual(self.client.put('/api/draft',json={'selected':[p['id']],'quantities':{str(p['id']):2}},headers=self.headers).status_code,200)
+        order=self.post('/api/orders',{'items':[{'id':p['id'],'quantity':1}],'mode':'single','columns':['name','color','cartonSize','cartonWeight','material','parameters']}).json()
+        before=self.client.get(order['url']).content
+        ws=load_workbook(io.BytesIO(before)).active
+        self.assertEqual([c.value for c in ws[3]],['商品名称','颜色','外箱尺寸','单箱重量（kg）','材质','产品参数'])
+        self.assertEqual([c.value for c in ws[4]],['彩色杯','红色','40×30×20 cm',12.345,'不锈钢','容量 500ml\n耐温 100℃'])
+        deleted=self.client.delete('/api/products/'+str(p['id']),headers=self.headers)
+        self.assertEqual(deleted.status_code,200,deleted.text)
+        state=self.client.get('/api/state').json()
+        self.assertEqual(state['products'],[])
+        self.assertEqual(state['draft'],{'selected':[],'quantities':{}})
+        self.assertEqual(self.client.get(order['url']).content,before)
+        self.assertEqual(self.client.delete('/api/products/'+str(p['id']),headers=self.headers).status_code,400)
     def test_export_and_positive_quantity(self):
         p=self.post('/api/products',product()).json()
         self.assertEqual(self.post('/api/orders',{'items':[{'id':p['id'],'quantity':0}]}).status_code,400)

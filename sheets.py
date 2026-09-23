@@ -58,8 +58,8 @@ def image_rows(path, sheet_name, store):
                     warnings.append(f'第 {number} 行图片无法导入（过大或格式不支持），请手动补充。')
     return pics,warnings
 
-FIELDS={'code':'销售编码','factoryCode':'厂家编码','name':'商品名称','factory':'厂家名称','size':'尺寸','battery':'电池容量','charger':'充电头 / 接口','pack':'装箱数','volume':'单件体积','price':'出厂价','cat':'分类','notes':'备注','images':'主图','boxImages':'彩盒'}
-ALIASES={'code':['销售编码','自定义编码','商家编码'],'factoryCode':['厂家编码','货号','型号','产品编码'],'name':['商品名称','产品名称','品名','名称'],'factory':['厂家名称','厂家','供应商'],'size':['尺寸','产品尺寸','规格'],'battery':['电池容量','电池'],'charger':['充电头 / 接口','充电头','接口'],'pack':['装箱数','装箱数量','每箱数量','箱规'],'volume':['单件体积','体积','每箱体积'],'price':['出厂价','单价','价格'],'cat':['分类','类别'],'notes':['备注'],'images':['主图','图片','商品图片','产品图片'],'boxImages':['彩盒','彩盒图片','包装图片']}
+FIELDS={'code':'销售编码','factoryCode':'厂家编码','name':'商品名称','factory':'厂家名称','color':'颜色','size':'尺寸','cartonSize':'外箱尺寸','cartonWeight':'单箱重量（kg）','material':'材质','parameters':'产品参数','battery':'电池容量','charger':'充电头 / 接口','pack':'装箱数','volume':'单件体积','price':'出厂价','cat':'分类','notes':'备注','images':'主图','boxImages':'彩盒'}
+ALIASES={'code':['销售编码','自定义编码','商家编码'],'factoryCode':['厂家编码','货号','型号','产品编码'],'name':['商品名称','产品名称','品名','名称'],'factory':['厂家名称','厂家','供应商'],'color':['颜色','产品颜色','色号'],'size':['尺寸','产品尺寸','规格'],'cartonSize':['外箱尺寸','箱子尺寸','外箱规格','箱规尺寸'],'cartonWeight':['单箱重量','单箱重量（kg）','单箱重量(kg)','毛重','每箱重量'],'material':['材质','产品材质'],'parameters':['产品参数','参数','规格参数'],'battery':['电池容量','电池'],'charger':['充电头 / 接口','充电头','接口'],'pack':['装箱数','装箱数量','每箱数量','箱规'],'volume':['单件体积','体积','每箱体积'],'price':['出厂价','单价','价格'],'cat':['分类','类别'],'notes':['备注'],'images':['主图','图片','商品图片','产品图片'],'boxImages':['彩盒','彩盒图片','包装图片']}
 
 def clean_header(s):
     return re.sub(r'[\s\(（].*','',str(s).strip()).lower()
@@ -195,7 +195,7 @@ def style_sheet(ws,header):
 def template_bytes():
     w=Workbook();s=w.active;s.title='商品导入模板'
     s.append(list(FIELDS.values()));style_sheet(s,1)
-    note=w.create_sheet('填写说明');notes=['在商品导入模板工作表填写数据，第一行是表头。','必填：销售编码（或导入时生成）、厂家编码、商品名称。厂家名称、装箱数和出厂价可以留空，空值按 0 或空白保存。','销售编码和厂家编码建议设置为文本，保留前导零。','未填写单件体积按 0 处理；提交前请核对。','出厂价单位：元/个；装箱数：个/件；体积：m³/件。','图片：主图和彩盒分别放在对应列、对应商品行；每组最多 5 张普通嵌入图片。复杂 WPS 图片公式可能需要手动补图。']
+    note=w.create_sheet('填写说明');notes=['在商品导入模板工作表填写数据，第一行是表头。','必填：销售编码（或导入时生成）、厂家编码、商品名称。其他字段可以留空。','销售编码和厂家编码建议设置为文本，保留前导零。','外箱尺寸请写明长、宽、高及单位；单箱重量单位为 kg，最多 3 位小数。产品参数可填写较长的文字。','未填写单件体积按 0 处理；提交前请核对。','出厂价单位：元/个；装箱数：个/件；体积：m³/件。','图片：主图和彩盒分别放在对应列、对应商品行；每组最多 5 张普通嵌入图片。复杂 WPS 图片公式可能需要手动补图。']
     for n in notes:note.append([n])
     note.column_dimensions['A'].width=100
     out=io.BytesIO();w.save(out);return out.getvalue()

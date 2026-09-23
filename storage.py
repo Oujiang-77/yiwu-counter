@@ -16,11 +16,12 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 VERSION = '0.1.3'
-TEXT_FIELDS = ('code','factoryCode','name','factory','size','battery','charger','cat','notes')
+TEXT_FIELDS = ('code','factoryCode','name','factory','size','battery','charger','cat','notes','color','cartonSize','material')
 
 def normalize_product(data):
     out=dict(data)
     for key in ('area','inner','min'):out.pop(key,None)
+    for key in ('color','cartonSize','cartonWeight','material','parameters'):out.setdefault(key,'')
     out['images']=out.get('images', [out['image']] if out.get('image') else [])
     out['boxImages']=out.get('boxImages',[])
     out['image']=out['images'][0] if out['images'] else ''
@@ -31,12 +32,14 @@ def now():
 
 def validate_product(data):
     out = {k: str(data.get(k) or '').strip() for k in TEXT_FIELDS}
+    out['parameters'] = str(data.get('parameters') or '').strip()
     out['code'] = out['code'].upper()
     for k, label in [('code','销售编码'),('factoryCode','厂家编码'),('name','商品名称')]:
         if not out[k]:
             raise ValueError(f'请填写{label}')
-    if any(len(v)>300 for v in out.values()):
+    if any(len(v)>300 for k,v in out.items() if k!='parameters'):
         raise ValueError('文字字段最多 300 个字符')
+    if len(out['parameters'])>3000:raise ValueError('产品参数最多 3000 个字符')
     for k, label in [('pack','装箱数')]:
         if str(data.get(k,'')).strip() == '':
             out[k] = 0
@@ -61,6 +64,15 @@ def validate_product(data):
             out[k] = float(v)
         except (InvalidOperation,ValueError):
             raise ValueError(f'{label}须为非负数，单价最多 2 位、体积最多 6 位小数')
+    if str(data.get('cartonWeight','')).strip() == '':
+        out['cartonWeight']=''
+    else:
+        try:
+            weight=Decimal(str(data['cartonWeight']))
+            if not weight.is_finite() or weight<0 or weight>100000 or weight!=weight.quantize(Decimal('0.001')):raise ValueError()
+            out['cartonWeight']=float(weight)
+        except (InvalidOperation,ValueError,TypeError):
+            raise ValueError('单箱重量须为非负数，最多 3 位小数（kg）')
     out['cat'] = out['cat'] or '日用百货'
     for key,label in [('images','主图'),('boxImages','彩盒')]:
         images=data.get(key,([data['image']] if data.get('image') else []) if key=='images' else [])
@@ -121,6 +133,19 @@ class Store:
             except sqlite3.IntegrityError:
                 raise ValueError('销售编码已存在，或同厂家已有该厂家编码，请编辑原商品')
         return dict(p,id=product_id)
+
+    def delete_product(self,product_id):
+        with self.lock,self.connect() as c:
+            row=c.execute('SELECT id FROM products WHERE id=?',(product_id,)).fetchone()
+            if not row:raise ValueError('商品不存在')
+            c.execute('DELETE FROM products WHERE id=?',(product_id,))
+            draft_row=c.execute('SELECT value FROM kv WHERE key=?',('draft',)).fetchone()
+            if draft_row:
+                draft=json.loads(draft_row['value'])
+                draft['selected']=[v for v in draft.get('selected',[]) if v!=product_id]
+                draft.setdefault('quantities',{}).pop(str(product_id),None)
+                c.execute('UPDATE kv SET value=? WHERE key=?',(json.dumps(draft,ensure_ascii=False),'draft'))
+        return {'ok':True}
 
     def commit_import(self, rows):
         """All accepted rows are committed in one transaction; duplicates never overwrite."""

@@ -13,6 +13,9 @@ js=js.replace(/\+p\.code\+/g,'+esc(p.code)+').replace(/\+p\.factoryCode\+/g,'+es
 js=js.replace(/\+p\.cat\+/g,'+esc(p.cat)+');
 js=js.replace("p.color+'", "(p.color||'#f3f6fa')+'");
 js=js.replaceAll("+p.color+","+(p.color||'#f3f6fa')+");
+// Product color is business text (e.g. 红色), not a CSS background value.
+js=js.replaceAll("(p.color||'#f3f6fa')", "'#f3f6fa'");
+js=js.replaceAll('data-action="edit" data-id="\'+p.id+\'">修改</button>', 'data-action="edit" data-id="\'+p.id+\'">修改</button><button class="quiet help-link danger" data-action="productDelete" data-id="\'+p.id+\'">删除</button>');
 js=js.replace("photoUrl=next;photoName=file.name;","photoFile=file;photoUrl=next;photoName=file.name;");
 js=js.replace('演示识别文本','识别原文');
 js=js.replace('演示模式：以下是固定示例行，不是这张照片的真实识别结果。可以修改商品、数量和单位体验确认流程。','离线识别结果需要人工核对，可能漏行或错字。请对照原图检查并补充，不能直接作为下单依据。');
@@ -43,6 +46,7 @@ css+='\n.dir-browser{min-width:0}.dir-toolbar{display:flex;align-items:center;ga
 css+='.import-section{padding:18px 20px;margin:0 0 18px;border:1px solid #dce4f0;border-radius:12px;background:#f6f8fc}.import-section:last-child{margin-bottom:0}.import-section h3{display:flex;align-items:center;gap:9px;margin:0 0 16px;font-size:14px;color:#263b58}.import-section h3:before{content:"";width:4px;height:15px;background:var(--accent);border-radius:3px}.import-section input,.import-section select{background:#fff}.import-section .import-mappings{gap:12px 16px}.import-section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:16px}.import-section-heading small{font-size:11px;color:#8a97ab}.import-source-row{display:grid;grid-template-columns:minmax(0,1fr) 120px auto;align-items:end;gap:16px}.import-source-row label,.import-supplement label{display:flex;flex-direction:column;gap:8px;font-size:12px}.import-source-row button{height:39px;white-space:nowrap}.import-supplement{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:16px}.import-hint{margin:12px 0 0;font-size:11px;color:#8a97ab;line-height:1.6}.upload-box.dragging{border-color:var(--accent);background:#eaf0ff;box-shadow:inset 0 0 0 1px var(--accent)}.upload-box[aria-busy=true]{opacity:.65;cursor:wait}.upload-box[aria-busy=true] .upload-label{pointer-events:none}@media(max-width:600px){.import-source-row{grid-template-columns:minmax(0,1fr) 68px auto;gap:8px}.import-source-row button{padding:8px;font-size:11px}.import-section-heading{display:block}.import-section-heading small{display:block;margin-bottom:12px}.import-supplement{grid-template-columns:1fr}}';
 css+='\n.import-mappings .form-label:has(.required-mark){color:#d64b4b;font-weight:600}';
 css+='\n'+fs.readFileSync('frontend-product.css','utf8');
+css+='\n.field b{white-space:pre-wrap;overflow-wrap:anywhere}';
 fs.mkdirSync('web',{recursive:true});fs.writeFileSync('web/app.css',css);fs.writeFileSync('web/app.js',js);
 fs.writeFileSync('web/index.html','<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>货有数 · 档口开单系统</title><link rel="stylesheet" href="/assets/app.css"></head><body><div id="app"><div style="padding:40px;font-family:Microsoft YaHei">正在连接本地服务。如果你直接打开了此页面，请关闭本页，双击“档口开单系统.exe”启动。</div></div><dialog id="dialog" class="dialog" aria-labelledby="dialogTitle"></dialog><div id="toast" class="toast hidden" role="status"></div><script src="/assets/app.js"></script></body></html>');
 console.log('Production frontend generated without sample products.');
