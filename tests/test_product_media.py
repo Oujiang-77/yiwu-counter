@@ -63,12 +63,12 @@ class ProductMediaTests(unittest.TestCase):
     def test_custom_export_persistence_photos_and_totals(self):
         main=[self.upload() for _ in range(5)];boxes=[self.upload('blue') for _ in range(5)]
         saved=self.post('/api/products',dict(product(),images=main,boxImages=boxes)).json()
-        columns=['amount','boxImages','name','images','quantity']
+        columns=['totalAmount','boxImages','name','images','quantity']
         r=self.client.put('/api/export-settings',json={'columns':columns},headers=self.headers);self.assertEqual(r.status_code,200)
         self.assertEqual(Store(self.temp.name).get_value('exportColumns'),columns)
         r=self.post('/api/orders',{'items':[{'id':saved['id'],'quantity':2}],'mode':'single'});self.assertEqual(r.status_code,200,r.text)
         b=load_workbook(io.BytesIO(self.client.get(r.json()['url']).content));s=b.active
-        self.assertEqual([c.value for c in s[3]],['金额','彩盒','商品名称','主图','件数'])
+        self.assertEqual([c.value for c in s[3]],['总金额','彩盒','商品名称','主图','件数'])
         self.assertEqual(s['A4'].value,1500);self.assertEqual(s['A5'].value,'=SUM(A4:A4)');self.assertEqual(s['E5'].value,'=SUM(E4:E4)')
         self.assertEqual(len(s._images),10)
         self.assertEqual(sorted(im.anchor._from.col for im in s._images),[1]*5+[3]*5)

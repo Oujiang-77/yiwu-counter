@@ -36,7 +36,7 @@ class LocalAppTests(unittest.TestCase):
         binary=self.client.get(r.json()['url']).content
         book=load_workbook(io.BytesIO(binary));ws=book.active
         values=dict(zip([c.value for c in ws[3]],[c.value for c in ws[4]]))
-        self.assertEqual(values['件数'],3);self.assertEqual(values['总数量'],180);self.assertEqual(values['金额'],2250)
+        self.assertEqual(values['件数'],3);self.assertEqual(values['总数量'],180);self.assertEqual(values['总金额'],2250)
         # Changing a product does not alter an existing order snapshot.
         data=product();data['price']=99
         self.client.put('/api/products/'+str(p['id']),json=data,headers=self.headers)
@@ -86,7 +86,7 @@ class LocalAppTests(unittest.TestCase):
         merged=self.post('/api/orders',{'items':items,'mode':'single'}).json()
         book=load_workbook(io.BytesIO(self.client.get(merged['url']).content));self.assertEqual(len(book.sheetnames),2)
         ws=book.worksheets[0];self.assertEqual(ws['A4'].value,'=1+1');self.assertEqual(ws['A4'].data_type,'s')
-        self.assertEqual(dict(zip([c.value for c in ws[3]],[c.value for c in ws[4]]))['金额'],18)
+        self.assertEqual(dict(zip([c.value for c in ws[3]],[c.value for c in ws[4]]))['总金额'],18)
         split=self.post('/api/orders',{'items':items,'mode':'multiple'}).json()
         with zipfile.ZipFile(io.BytesIO(self.client.get(split['url']).content)) as z:
             self.assertEqual(len(z.namelist()),2)

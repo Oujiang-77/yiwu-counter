@@ -126,7 +126,11 @@ def make_app(data_dir,token=None,needs_data_location=False):
     app.mount('/assets',StaticFiles(directory=web),name='assets')
 
     @app.get('/api/state')
-    def state():return {'products':store.products(),'draft':store.get_value('draft',{'selected':[],'quantities':{}}),'version':VERSION,'dataDir':str(store.root),'exportFields':EXPORT_FIELDS,'exportColumns':store.get_value('exportColumns',list(EXPORT_FIELDS)),'ocrAvailable':recognition.available(),'needsDataLocation':bool(app.state.needs_data_location)}
+    def state():
+        saved_columns=store.get_value('exportColumns',list(EXPORT_FIELDS))
+        try: saved_columns=validate_columns(saved_columns)
+        except ValueError: saved_columns=list(EXPORT_FIELDS)
+        return {'products':store.products(),'draft':store.get_value('draft',{'selected':[],'quantities':{}}),'version':VERSION,'dataDir':str(store.root),'exportFields':EXPORT_FIELDS,'exportColumns':saved_columns,'ocrAvailable':recognition.available(),'needsDataLocation':bool(app.state.needs_data_location)}
 
     @app.get('/api/update/check')
     def update_check():
