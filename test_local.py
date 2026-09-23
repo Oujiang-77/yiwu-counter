@@ -94,6 +94,17 @@ class LocalAppTests(unittest.TestCase):
         self.assertEqual(state['draft'],{'selected':[c['id']],'quantities':{str(c['id']):2}})
         self.assertEqual(self.client.get(order['url']).content,original)
         self.assertEqual(len(self.client.get('/api/orders').json()),1)
+    def test_product_field_order_persists_and_rejects_invalid_order(self):
+        defaults=['code','factoryCode','name','factory','color','size','cartonSize','cartonWeight','material','pack','price','battery','charger','volume','cat','parameters','notes']
+        self.assertEqual(self.client.get('/api/state').json()['productFieldOrder'],[])
+        order=['material',*filter(lambda key:key!='material',defaults)]
+        response=self.client.put('/api/product-field-order',json={'order':order},headers=self.headers)
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(self.client.get('/api/state').json()['productFieldOrder'],order)
+        self.assertEqual(Store(self.temp.name).get_value('productFieldOrder'),order)
+        invalid=self.client.put('/api/product-field-order',json={'order':[['bad']]},headers=self.headers)
+        self.assertEqual(invalid.status_code,400,invalid.text)
+        self.assertEqual(self.client.get('/api/state').json()['productFieldOrder'],order)
     def test_image_and_backup_restore(self):
         raw=io.BytesIO();Image.new('RGB',(20,20),'red').save(raw,'PNG')
         name=self.client.post('/api/images',files={'file':('p.png',raw.getvalue(),'image/png')},headers=self.headers).json()['image']

@@ -139,7 +139,7 @@ def make_app(data_dir,token=None,needs_data_location=False):
         saved_columns=store.get_value('exportColumns',list(EXPORT_FIELDS))
         try: saved_columns=validate_columns(saved_columns)
         except ValueError: saved_columns=list(EXPORT_FIELDS)
-        return {'products':store.products(),'draft':store.get_value('draft',{'selected':[],'quantities':{}}),'version':VERSION,'dataDir':str(store.root),'exportFields':EXPORT_FIELDS,'exportColumns':saved_columns,'ocrAvailable':recognition.available(),'needsDataLocation':bool(app.state.needs_data_location)}
+        return {'products':store.products(),'draft':store.get_value('draft',{'selected':[],'quantities':{}}),'version':VERSION,'dataDir':str(store.root),'exportFields':EXPORT_FIELDS,'exportColumns':saved_columns,'productFieldOrder':store.get_value('productFieldOrder',[]),'ocrAvailable':recognition.available(),'needsDataLocation':bool(app.state.needs_data_location)}
 
     @app.get('/api/update/check')
     def update_check():
@@ -395,6 +395,15 @@ def make_app(data_dir,token=None,needs_data_location=False):
         columns=validate_columns(data.get('columns'))
         store.set_value('exportColumns',columns)
         return {'columns':columns}
+
+    @app.put('/api/product-field-order')
+    def product_field_order(data:dict):
+        keys=['code','factoryCode','name','factory','color','size','cartonSize','cartonWeight','material','pack','price','battery','charger','volume','cat','parameters','notes']
+        order=data.get('order')
+        if not isinstance(order,list) or len(order)!=len(keys) or any(not isinstance(key,str) for key in order) or set(order)!=set(keys):
+            raise ValueError('字段顺序无效，请刷新后重试')
+        store.set_value('productFieldOrder',order)
+        return {'order':order}
 
     @app.post('/api/orders')
     def export(data:dict):
