@@ -43,4 +43,6 @@ manifest.write_text(json.dumps({
     'sha256':digest,
     'repository':'Oujiang-77/yiwu-counter',
 },ensure_ascii=False,indent=2)+'\n','utf8')
-print(json.dumps({'file':str(output),'bytes':output.stat().st_size,'sha256':digest,'manifest':str(manifest)},ensure_ascii=False))
+# GitHub Actions Windows runners may expose a cp1252 console. Keep the
+# machine-readable summary ASCII-safe even though artifact paths are Chinese.
+print(json.dumps({'file':str(output),'bytes':output.stat().st_size,'sha256':digest,'manifest':str(manifest)},ensure_ascii=True))
