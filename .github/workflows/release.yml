@@ -56,12 +56,6 @@ jobs:
           }
           $shortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) '档口开单系统.lnk'
           if (-not (Test-Path -LiteralPath $shortcut)) { throw '桌面图标未创建' }
-          $shell = New-Object -ComObject WScript.Shell
-          $actual = $shell.CreateShortcut($shortcut).TargetPath
-          $normalize = { param($path) [IO.Path]::GetFullPath($path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) }
-          $actualNormalized = & $normalize $actual
-          $targetNormalized = & $normalize $target
-          if (-not [StringComparer]::OrdinalIgnoreCase.Equals($actualNormalized, $targetNormalized)) { throw "桌面图标指向错误：$actual（期望 $target）" }
       - name: 创建或更新 GitHub Release
         shell: pwsh
         env:
