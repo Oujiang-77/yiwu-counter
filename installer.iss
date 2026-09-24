@@ -27,7 +27,9 @@ AppMutex=Local\HuoYouShu-Counter
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Languages]
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+; GitHub's Inno Setup package does not include optional translation files.
+; Keep the installer build self-contained; the installed application remains Chinese.
+Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "dist\档口开单系统\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
