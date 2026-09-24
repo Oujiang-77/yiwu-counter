@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -24,11 +25,12 @@ jobs:
           python -m venv .venv
           .\.venv\Scripts\python.exe -m pip install --upgrade pip
           .\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
-      - name: 校验标签版本
+      - name: 校验发布版本
         shell: pwsh
         run: |
           $version = .\.venv\Scripts\python.exe -c "from storage import VERSION; print(VERSION)"
-          if ($env:GITHUB_REF_NAME -ne "v$version") { throw "标签 $env:GITHUB_REF_NAME 与程序版本 $version 不一致" }
+          $tag = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "v$version" }
+          if ($tag -ne "v$version") { throw "发布标签 $tag 与程序版本 $version 不一致" }
       - name: 构建并打包
         run: .\build.ps1
       - name: 安装 Inno Setup
@@ -42,26 +44,40 @@ jobs:
         run: |
           $version = .\.venv\Scripts\python.exe -c "from storage import VERSION; print(VERSION)"
           $installer = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) "outputs/HuoYouShu-Setup-$version-Windows-x64.exe"
-          $target = Join-Path $env:LOCALAPPDATA 'Programs/HuoYouShu/档口开单系统.exe'
+          $targetDir = Join-Path $env:LOCALAPPDATA 'Programs\HuoYouShu'
+          $target = Join-Path $targetDir '档口开单系统.exe'
           foreach ($pass in 1, 2) {
-            & $installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
-            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $target)) { throw "第 $pass 次安装失败" }
+            $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$targetDir`"")
+            $result = Start-Process -FilePath $installer -ArgumentList $arguments -Wait -PassThru
+            if ($result.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $target)) {
+              $listing = if (Test-Path -LiteralPath $targetDir) { (Get-ChildItem -LiteralPath $targetDir -Force | Out-String) } else { '<目标目录不存在>' }
+              throw "第 $pass 次安装失败，退出码 $($result.ExitCode)，目标文件：$target`n$listing"
+            }
           }
           $shortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) '档口开单系统.lnk'
           if (-not (Test-Path -LiteralPath $shortcut)) { throw '桌面图标未创建' }
           $shell = New-Object -ComObject WScript.Shell
           $actual = $shell.CreateShortcut($shortcut).TargetPath
-          if ($actual -ne $target) { throw "桌面图标指向错误：$actual" }
-      - name: 创建 GitHub Release
+          $normalize = { param($path) [IO.Path]::GetFullPath($path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) }
+          $actualNormalized = & $normalize $actual
+          $targetNormalized = & $normalize $target
+          if (-not [StringComparer]::OrdinalIgnoreCase.Equals($actualNormalized, $targetNormalized)) { throw "桌面图标指向错误：$actual（期望 $target）" }
+      - name: 创建或更新 GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $outputDir = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) 'outputs'
           $version = .\.venv\Scripts\python.exe -c "from storage import VERSION; print(VERSION)"
+          $tag = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "v$version" }
           $installer = Join-Path $outputDir "HuoYouShu-Setup-$version-Windows-x64.exe"
           $assets = @($installer, "$installer.sha256.txt")
           foreach ($asset in $assets) {
             if (-not (Test-Path -LiteralPath $asset)) { throw "缺少发布文件：$asset" }
           }
-          gh release create $env:GITHUB_REF_NAME $assets --title "档口开单系统 $env:GITHUB_REF_NAME" --notes-file RELEASE-NOTES.md
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $assets --clobber
+          } else {
+            gh release create $tag $assets --title "档口开单系统 $tag" --notes-file RELEASE-NOTES.md
+          }
