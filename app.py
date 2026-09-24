@@ -139,7 +139,7 @@ def make_app(data_dir,token=None,needs_data_location=False):
         saved_columns=store.get_value('exportColumns',list(EXPORT_FIELDS))
         try: saved_columns=validate_columns(saved_columns)
         except ValueError: saved_columns=list(EXPORT_FIELDS)
-        return {'products':store.products(),'draft':store.get_value('draft',{'selected':[],'quantities':{}}),'version':VERSION,'dataDir':str(store.root),'exportFields':EXPORT_FIELDS,'exportColumns':saved_columns,'productFieldOrder':store.get_value('productFieldOrder',[]),'ocrAvailable':recognition.available(),'needsDataLocation':bool(app.state.needs_data_location)}
+        return {'products':store.products(),'draft':store.get_value('draft',{'selected':[],'quantities':{}}),'version':VERSION,'dataDir':str(store.root),'exportFields':EXPORT_FIELDS,'exportColumns':saved_columns,'productFieldOrder':store.get_value('productFieldOrder',[]),'productFieldVisible':store.get_value('productFieldVisible',[]),'ocrAvailable':recognition.available(),'needsDataLocation':bool(app.state.needs_data_location)}
 
     @app.get('/api/update/check')
     def update_check():
@@ -305,6 +305,9 @@ def make_app(data_dir,token=None,needs_data_location=False):
     @app.delete('/api/products/{pid}')
     def delete_product(pid:int):return store.delete_product(pid)
 
+    @app.get('/api/deletion-logs')
+    def deletion_logs():return store.deletion_logs()
+
     @app.put('/api/draft')
     def draft(data:dict):
         ids={p['id'] for p in store.products()}
@@ -402,8 +405,13 @@ def make_app(data_dir,token=None,needs_data_location=False):
         order=data.get('order')
         if not isinstance(order,list) or len(order)!=len(keys) or any(not isinstance(key,str) for key in order) or set(order)!=set(keys):
             raise ValueError('字段顺序无效，请刷新后重试')
+        visible=data.get('visible')
+        if visible is not None:
+            if not isinstance(visible,list) or any(not isinstance(key,str) for key in visible) or len(visible)!=len(set(visible)) or not {'code','factoryCode','name'}.issubset(visible) or not set(visible).issubset(keys):
+                raise ValueError('字段显示配置无效，请刷新后重试')
         store.set_value('productFieldOrder',order)
-        return {'order':order}
+        if visible is not None:store.set_value('productFieldVisible',visible)
+        return {'order':order,'visible':visible if visible is not None else store.get_value('productFieldVisible',[])}
 
     @app.post('/api/orders')
     def export(data:dict):

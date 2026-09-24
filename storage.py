@@ -100,6 +100,11 @@ class Store:
             CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, created_at TEXT NOT NULL,
              data TEXT NOT NULL, file TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS deletion_logs (
+             id INTEGER PRIMARY KEY AUTOINCREMENT, deleted_at TEXT NOT NULL,
+             product_id INTEGER NOT NULL, code TEXT NOT NULL, name TEXT NOT NULL,
+             factory TEXT NOT NULL, data TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS idx_deletion_logs_deleted_at ON deletion_logs(deleted_at DESC);
             PRAGMA user_version=1;
             ''')
 
@@ -142,12 +147,17 @@ class Store:
             raise ValueError('请选择要删除的商品')
         with self.lock,self.connect() as c:
             requested=set(product_ids)
-            found=set()
+            found={}
             for start in range(0,len(product_ids),500):
                 batch=product_ids[start:start+500]
                 placeholders=','.join('?' for _ in batch)
-                found.update(row['id'] for row in c.execute(f'SELECT id FROM products WHERE id IN ({placeholders})',batch))
-            if found!=requested:raise ValueError('部分商品已不存在，请刷新后重试')
+                for row in c.execute(f'SELECT id,data FROM products WHERE id IN ({placeholders})',batch):
+                    found[row['id']]=json.loads(row['data'])
+            if set(found)!=requested:raise ValueError('部分商品已不存在，请刷新后重试')
+            deleted_at=now()
+            c.executemany(
+                'INSERT INTO deletion_logs(deleted_at,product_id,code,name,factory,data) VALUES(?,?,?,?,?,?)',
+                ((deleted_at,pid,found[pid].get('code',''),found[pid].get('name',''),found[pid].get('factory',''),json.dumps(found[pid],ensure_ascii=False)) for pid in product_ids))
             c.executemany('DELETE FROM products WHERE id=?',((pid,) for pid in product_ids))
             draft_row=c.execute('SELECT value FROM kv WHERE key=?',('draft',)).fetchone()
             if draft_row:
@@ -156,6 +166,11 @@ class Store:
                 for pid in found:draft.setdefault('quantities',{}).pop(str(pid),None)
                 c.execute('UPDATE kv SET value=? WHERE key=?',(json.dumps(draft,ensure_ascii=False),'draft'))
         return {'ok':True,'count':len(found)}
+
+    def deletion_logs(self):
+        with self.lock,self.connect() as c:
+            return [dict(id=row['id'],deletedAt=row['deleted_at'],productId=row['product_id'],code=row['code'],name=row['name'],factory=row['factory'])
+                    for row in c.execute('SELECT * FROM deletion_logs ORDER BY id DESC LIMIT 500')]
 
     def commit_import(self, rows):
         """All accepted rows are committed in one transaction; duplicates never overwrite."""
