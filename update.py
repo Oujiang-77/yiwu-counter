@@ -24,7 +24,7 @@ from pathlib import Path
 
 UPDATE_REPOSITORY = 'Oujiang-77/yiwu-counter'
 UPDATE_API_URL = f'https://api.github.com/repos/{UPDATE_REPOSITORY}/releases/latest'
-PACKAGE_SUFFIX = '-Windows-x64.zip'
+PACKAGE_SUFFIX = '-Windows-x64.exe'
 VERSION_PATTERN = re.compile(r'^v?(\d+(?:\.\d+){0,3})$')
 
 
@@ -52,7 +52,7 @@ def parse_release(release: dict, current_version: str) -> dict:
     if not package:
         return {'status': 'incomplete-release', 'message': '线上发布缺少 Windows 安装包'}
     package_name = str(package.get('name') or '')
-    checksum_names = (package_name + '.sha256.txt', package_name.removesuffix('.zip') + '.sha256.txt')
+    checksum_names = (package_name + '.sha256.txt',)
     checksum = next((asset for asset in release.get('assets', []) if str(asset.get('name') or '') in checksum_names), None)
     return {
         'status': 'ok',

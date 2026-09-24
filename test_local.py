@@ -12,11 +12,26 @@ from PIL import Image
 from storage import Store
 from app import make_app,should_reuse_running_instance
 from recognition import parse_lines
+from update import parse_release
 
 def product(code='A-13',factory='测试电器厂'):
     return dict(code=code,factoryCode='000138',name='测试风扇',factory=factory,area='浙江',size='10cm',battery='1200mAh',charger='Type-C',pack=60,inner=12,volume=.085,price=12.5,min=2)
 
 class LocalAppTests(unittest.TestCase):
+    def test_release_uses_windows_installer(self):
+        release={
+            'tag_name':'v0.1.4',
+            'assets':[
+                {'name':'档口开单系统-0.1.4-Windows-x64.zip','browser_download_url':'https://example.invalid/old.zip','size':1},
+                {'name':'HuoYouShu-Setup-0.1.4-Windows-x64.exe','browser_download_url':'https://example.invalid/setup.exe','size':2},
+                {'name':'HuoYouShu-Setup-0.1.4-Windows-x64.exe.sha256.txt','browser_download_url':'https://example.invalid/setup.sha256.txt','size':3},
+            ],
+        }
+        info=parse_release(release,'0.1.3')
+        self.assertEqual(info['status'],'ok')
+        self.assertTrue(info['updateAvailable'])
+        self.assertEqual(info['package']['name'],'HuoYouShu-Setup-0.1.4-Windows-x64.exe')
+        self.assertEqual(info['package']['checksumUrl'],'https://example.invalid/setup.sha256.txt')
     def test_running_old_version_cannot_capture_new_launch(self):
         from storage import VERSION
         self.assertTrue(should_reuse_running_instance({'application':'yiwu-counter','version':VERSION}))

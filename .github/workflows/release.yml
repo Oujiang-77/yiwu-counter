@@ -58,5 +58,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $outputDir = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) 'outputs'
-          $assets = Get-ChildItem -LiteralPath $outputDir -File | ForEach-Object { $_.FullName }
+          $version = .\.venv\Scripts\python.exe -c "from storage import VERSION; print(VERSION)"
+          $installer = Join-Path $outputDir "HuoYouShu-Setup-$version-Windows-x64.exe"
+          $assets = @($installer, "$installer.sha256.txt")
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset)) { throw "缺少发布文件：$asset" }
+          }
           gh release create $env:GITHUB_REF_NAME $assets --title "档口开单系统 $env:GITHUB_REF_NAME" --notes-file RELEASE-NOTES.md
